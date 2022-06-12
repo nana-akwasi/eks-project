@@ -1,0 +1,281 @@
+PART 1 - KUBERNETES ARCHITECTURE – EKS CLUSTER
+***You may need 3 terminals opened to the same directory where you will work on the project
+
+STEP 1 – Install AWS CLI – first check if you have already install on your terminal. Type on your terminal “aws –version”, if it says command not found then proceed with the below commands.
+
+	curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
+
+	sudo installer -pkg ./AWSCLIV2.pkg -target /
+
+Configure AWS CLI – this is just configuring your AWS credentials
+
+	In your terminal, type `aws configure`, the provide the credential needed for the following
+	
+AWS Access Key ID [None]: AKIAIOSFODNN7EXAMPLE 
+AWS Secret Access Key [None]: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+Default region name [None]: us-east-1
+Default output format [None]: json
+
+*** You will get this info where you create users in AWS and at the last page, you download the excel credentials for the user’s. If you don’t have user’s created, create one and use its credentials here
+
+*** Not required for this project but in case you want to modify user’s credentials like deleting of adding more user’s, go the these files, then modify both files. 
+		“~/.aws/credentials”
+		“~/.aws/config”
+use “aws configure --profile user-name” to set the user’s credentials if you have multiple users.
+
+After providing your credentials, type on your terminal `aws sts get-caller-identity` to make sure your credentials has been set.
+
+
+
+STEP 2 – CREATE EKS CLUSTER – Put in your terminal the below line by line
+
+https://docs.aws.amazon.com/eks/latest/userguide/eksctl.html
+
+brew tap weaveworks/tap
+brew install weaveworks/tap/eksctl
+eksctl version
+
+eksctl create cluster --name EKS-Cluster --ssh-access --ssh-public-key=~/.ssh/id_rsa.pub --version 1.21 --region us-east-1 --nodegroup-name linux-nodes --node-type t3.2xlarge --nodes 4
+
+*** You can choose a different name for your cluster
+*** Use your own key pair name that you have in AWS (If you dont have a key pair yet, just run `ssh-keygen`)
+*** t3.2xlarge is not the free tier so its charged but we need more memory for this project
+*** You can modify the number of worker nodes you want
+It might take around 20 minutes for the cluster to be active in AWS
+
+
+STEP 3 – Create a Kubernetes dashboard – Frontend console view
+Videos you can watch 
+- https://www.youtube.com/watch?v=cgYOpw5XLtk&t=861s
+- https://www.learnitguide.net/2020/10/install-kubernetes-dashboard-deploy.html
+Use the below command to download the Kubernestes dashboard and all its resources from the Kubernetes github website
+
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.1.0/aio/deploy/recommended.yaml
+
+To access the dashboard, perform the below commands
+
+kubectl proxy
+
+	Once you perform the above command, you will see this “Starting to serve on 127.0.0.1:8001”. Leave it and open a new terminal, navigate to the same EKS folder. Put in the below command.
+
+vi serviceaccount.yaml
+
+It will open a text editor page for you, just hit “i” to enter into insert mode and paste below there.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-user
+  namespace: kubernetes-dashboard
+
+When you are done, hit on “esc”, then hit “shift and :” at the same time, then type “w then q”, then hit “enter” to save the file and exit to get back to the terminal prompt to enter the below command
+
+kubectl apply -f serviceaccount.yaml
+
+The above command will create a service account, then we need to create a ClusterRoleBinding.
+
+vi clusterrolebinding.yaml
+
+It will open a text editor page for you, just hit “i” to enter into insert mode and paste below there.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: admin-user
+  namespace: kubernetes-dashboard
+
+When you are done, hit on “esc”, then hit “shift and :” at the same time, then type “w then q”, then hit “enter” to save the file and exit to get back to the terminal prompt to enter the below command
+
+kubectl apply -f clusterrolebinding.yaml
+
+The above will create a clusterrolebinding. Now we need a token to access the dashboard website. Put the below command to get the token.
+
+kubectl -n kubernetes-dashboard describe secret $(kubectl -n kubernetes-dashboard get secret | grep admin-user | awk '{print $1}')
+
+Copy the token and access the below link for the dashboard.
+
+http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
+
+
+
+
+Paste the token and sign in. DO NOT CANCEL THE OTHER TERMINAL SERVING THE PROXY, JUST LEAVE IT
+
+Once you’re logged in, type the below command your terminal to create a deployment
+
+kubectl create deploy test-deployment --image=nginx --replicas=2
+
+Now check the dashboard’s deployment tab and see. Vice versa, on the deployment tap, at the top right corner, you can create deployments from the add button “+”.
+
+
+
+
+
+STEP 4 – Use Helm, Create HPA (Horizontal Pod AutoScaler) and Metrics Server and test it
+
+Helm is a package manager for Kubernetes. Where developers develop and manage Kubernetes using Helm Chart. Developer community shares charts on Helm Hub. To install the latest version click here
+
+Installing Helm on Kubernetes – input the below line by line
+
+	curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 > get_helm.sh
+
+chmod 700 get_helm.sh
+
+./get_helm.sh``````````````````````````````````````````````````````````````````````````````````````````````````````````
+
+Video you can watch - https://www.youtube.com/watch?v=WofVD6vfSBU
+
+
+
+Run the below command to install the Metrics Server.
+
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.3.6/components.yaml
+
+Then check with the below command if the pod is running
+
+kubectl get pods -n kube-system -l k8s-app=metrics-server
+
+Now create a php-apche deployment
+
+kubectl create deployment php-apache --image=k8s.gcr.io/hpa-example
+
+Use the below to set CPU requests
+
+kubectl patch deployment php-apache -p='{"spec":{"template":{"spec":{"containers":[{"name":"hpa-example","resources":{"requests":{"cpu":"200m"}}}]}}}}'
+
+
+Now create a service
+
+kubectl create service clusterip php-apache --tcp=80
+
+Now we can create our HPA with the below command
+
+kubectl autoscale deployment php-apache --cpu-percent=50 --min=1 --max=10
+
+Now check you HPA has been created with the below command
+
+kubectl get hpa
+
+Now let’s create a pod, connect to the earlier deployment created, and add another command in the pod’s shell
+
+kubectl run -i --tty load-generator --image=busybox /bin/sh
+
+then enter the below after you see / #
+
+while true; do wget -q -O- http://php-apache; done
+
+Let it run for like 15 minutes then hit “control + c” to cancel then “control + d” to exit it. Now run below and watch for the 15 minutes to see how the pods scaled.
+
+kubectl get hpa -w
+
+Then hit “control + c” to cancel. You can also watch this on the dashboard.
+
+kubectl get pods
+
+To see how many pods you have
+
+
+
+
+STEP 5 – Use Helm to deploy Prometheus & Grafana
+	Video you can watch https://www.youtube.com/watch?v=losQlALIsYY
+
+Create a namespace and install prometheus
+
+kubectl create namespace prometheus
+
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm install prometheus prometheus-community/prometheus --namespace prometheus --set alertmanager.persistentVolume.storageClass="gp2",server.persistentVolume.storageClass="gp2"
+
+Check to see pods are running
+
+kubectl get pods -n prometheus
+
+Use portforward to access it from your local machine
+	
+kubectl --namespace=prometheus port-forward deploy/prometheus-server 9090
+
+Now go to your browser and type in http://localhost:9090/
+
+
+Choose a metric from the - insert metric at cursor menu, then choose Execute. Choose the Graph tab to show the metric over time. The following image shows container_memory_usage_bytes over time.
+
+From the top navigation bar, choose Status, then Targets.
+
+*** On a new terminal, navigate to the same directory and perform the below
+
+
+Create a namespace and install Grafana
+
+kubectl create namespace grafana
+
+helm repo add grafana https://grafana.github.io/helm-charts 
+
+helm repo update 
+
+
+vi prometheus-datasource.yaml
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      url: http://prometheus-server.prometheus.svc.cluster.local
+      access: proxy
+      isDefault: true
+
+
+helm install grafana grafana/grafana \
+    --namespace grafana \
+    --set persistence.storageClassName="gp2" \
+    --set persistence.enabled=true \
+    --set adminPassword='EKS!sAWSome' \
+    --values prometheus-datasource.yaml \
+    --set service.type=LoadBalancer 
+
+
+Check to see Grafana is running.
+	
+kubectl get all -n grafana
+
+Now get the ELB url
+
+export ELB=$(kubectl get svc -n grafana grafana -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+echo "http://$ELB"
+
+Now copy and paste the url in you browser.
+
+When logging in, use username "admin" and get password by running the following:
+
+kubectl get secret --namespace grafana grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+
+Now we need to create/import our Prometheus dashboard
+
+On the left side panel, you will see a plus “+” sign, put the curser on it and click on import. Where it says load, type in the Prometheus ID “3119”, then click on load. At the next page at the bottom, where it says select data source, click on the dropdown arrow and select “Prometheus”. You’re done.
+
+*** If the portforward for Prometheus server has stop on the other terminal, run it again there
+	
+kubectl --namespace=prometheus port-forward deploy/prometheus-server 9090
+
+Now let’s test
+Now let’s create a pod, connect to the earlier deployment created, and add another command in the pod’s shell
+
+kubectl run -i --tty load-generator --image=busybox /bin/sh
+
+then enter the below after you see / #
+
+while true; do wget -q -O- http://php-apache; done
+
+Let it run for like 7 minutes then hit “control + c” to cancel then “control + d” to exit it. While it’s running, watch how the metrics react on Grafana.
+
+
